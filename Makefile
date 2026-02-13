@@ -1,6 +1,6 @@
 # docs for developers:
 # make a release:
-# gh release create TAG
+# gh release create TAG -t 1.0 -n "Release notes" --generate-notes
 .PHONY: help buiod clean ruff test pixi publish dbsnp
 
 # Default target
