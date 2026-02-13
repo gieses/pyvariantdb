@@ -29,7 +29,6 @@ clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
 	find . -type f -name "*.pyo" -delete
-	snakemake --cleanup-metadata
 
 # Format code with ruff
 ruff:
