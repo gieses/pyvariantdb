@@ -7,35 +7,18 @@ and analysis.
 """
 
 import argparse
-import gc
-import sys
-from pathlib import Path
-from typing import Optional
-
 import cyvcf2 as cy
+import gc
+import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
 from loguru import logger
+from pathlib import Path
+from typing import Optional
 
 # Configuration constants
 DEFAULT_BATCH_SIZE = 500_000
 SCHEMA = pa.schema([pa.field("RSID", pa.string()), pa.field("ID", pa.string())])
-
-
-def setup_logging(debug: bool = False) -> None:
-    """
-    Configure loguru logging.
-
-    Args:
-        debug: Enable debug-level logging if True.
-    """
-    log_level = "DEBUG" if debug else "INFO"
-    logger.remove()  # Remove default handler
-    logger.add(
-        sys.stdout,
-        format="<level>{time:YYYY-MM-DD HH:mm:ss}</level> | <level>{level: <8}</level> | <level>{message}</level>",
-        level=log_level,
-    )
 
 
 def validate_input_file(input_path: str) -> Path:
@@ -109,44 +92,41 @@ def convert_vcf_to_parquet(
         variant_count = 0
         df = None
 
-        with cy.VCF(str(input_file)) as vcf:
-            for variant in vcf:
-                # Process the variant
-                row_data = process_variant(variant)
-                if row_data is None:
-                    continue
+        for variant in cy.VCF(str(input_file)):
+            # Process the variant
+            row_data = process_variant(variant)
+            if row_data is None:
+                continue
 
-                # Convert row to Polars DataFrame
-                import polars as pl
+            # Convert row to Polars DataFrame
+            row_df = pl.DataFrame(row_data)
 
-                row_df = pl.DataFrame(row_data)
+            # Initialize or append to batch dataframe
+            if df is None:
+                df = row_df.clone()
+            else:
+                df.vstack(row_df, in_place=True)
 
-                # Initialize or append to batch dataframe
-                if df is None:
-                    df = row_df.clone()
-                else:
-                    df.vstack(row_df, in_place=True)
+            variant_count += 1
 
-                variant_count += 1
+            # Write batch when batch size is reached
+            if variant_count % batch_size == 0 and variant_count > 0:
+                batch = pa.RecordBatch.from_pandas(df.to_pandas(), schema=SCHEMA)
+                writer.write_batch(batch)
+                logger.info(
+                    f"Processed {variant_count:,} variants | "
+                    f"Batch written to {output_file}"
+                )
+                df = None  # Reset for next batch
 
-                # Write batch when batch size is reached
-                if variant_count % batch_size == 0 and variant_count > 0:
-                    batch = pa.RecordBatch.from_pandas(df.to_pandas())
-                    writer.write_batch(batch)
-                    logger.info(
-                        f"Processed {variant_count:,} variants | "
-                        f"Batch written to {output_file}"
-                    )
-                    df = None  # Reset for next batch
-
-                # Log progress every 100k variants
-                if variant_count % 100000 == 0:
-                    logger.info(f"Progress: {variant_count:,} variants processed")
-                    gc.collect()
+            # Log progress every 100k variants
+            if variant_count % 100_000 == 0:
+                logger.info(f"Progress: {variant_count:,} variants processed")
+                gc.collect()
 
         # Write remaining variants if any
         if df is not None:
-            batch = pa.RecordBatch.from_pandas(df.to_pandas())
+            batch = pa.RecordBatch.from_pandas(df.to_pandas(), schema=SCHEMA)
             writer.write_batch(batch)
             logger.info(
                 f"Final batch written to {output_file} "
@@ -199,9 +179,6 @@ Examples:
 
     args = parser.parse_args()
 
-    # Setup logging
-    setup_logging(debug=args.debug)
-
     try:
         # Validate input file
         input_file = validate_input_file(args.input)
@@ -228,4 +205,4 @@ Examples:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
