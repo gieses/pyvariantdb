@@ -1,0 +1,122 @@
+"""Snakemake workflow for processing of dbSNP.
+
+This workflow downloads, processes, and converts dbSNP data (GRCh38 build 156) to Parquet format.
+
+Pipeline Steps:
+    1. convert_contig: Downloads and filters dbSNP data for SNVs only
+    2. subset_BCF: Splits data by chromosome
+    3. convert_parquet: Converts each chromosome to Parquet lookup tables
+    4. combine_all_parquets: Combines all chromosome-specific parquet files into one
+
+Usage Examples:
+    # Run all rules (default)
+    >>> snakemake --cores all
+
+    # Run on a cluster with SLURM
+    >>> snakemake --cluster "sbatch -p {resources.partition} --mem={resources.mem} -t {resources.time} -c {threads}" -j 23
+
+    # Run only the combine_all_parquets rule
+    >>> snakemake --cores 1 output/dbSNP_156.combined.lookup.parquet
+
+    # Use a custom config file
+    >>> snakemake --configfile my_config.yaml --cores all
+
+    # Dry run to see what will be executed
+    >>> snakemake -n
+
+"""
+import yaml
+from importlib.resources import files
+
+pyvariant_assets_dir = files("pyvariantdb") / "assets"
+pyvariant_contigs = pyvariant_assets_dir / "contig_map.tsv"
+pyvariant_config = pyvariant_assets_dir / "config.yaml"
+
+# Use packaged config only when no config was provided on the command line.
+if not config:
+    with open(pyvariant_config,"r") as f:
+        config = yaml.safe_load(f)
+
+CHROMS = [f"chr{x}" for x in range(1,23)] + ['chrX']
+
+print(CHROMS)
+
+rule all:
+    input:
+        f"{config['output_dir']}/dbSNP_156.bcf",
+        expand(f"{config['output_dir']}/dbSNP_156.{{CHROM}}.bcf",CHROM=CHROMS),
+        expand(f"{config['output_dir']}/dbSNP_156.{{CHROM}}.lookup.parquet",CHROM=CHROMS),
+        f"{config['output_dir']}/dbSNP_156.combined.lookup.parquet"
+
+rule convert_contig:
+    input:
+        "GCF_000001405.40.gz"
+    output:
+        f"{config['output_dir']}/dbSNP_156.bcf"
+    threads: config['resources']['convert_contig']['threads']
+    resources:
+        mem=config['resources']['convert_contig']['mem'],
+        partition=config['cluster']['partition'],
+        time=config['resources']['convert_contig']['time']
+    shell:
+        """
+        bcftools view -i "INFO/VC='SNV'" {input} | 
+            bcftools annotate --rename-chrs {pyvariant_contigs} -Ob --threads {threads} > {output}
+
+        bcftools index {output}
+        """
+
+rule subset_BCF:
+    input:
+        f"{config['output_dir']}/dbSNP_156.bcf"
+    output:
+        f"{config['output_dir']}/dbSNP_156.{{CHROM}}.bcf"
+    threads: config['resources']['subset_BCF']['threads']
+    resources:
+        mem=config['resources']['subset_BCF']['mem'],
+        partition=config['cluster']['partition'],
+        time=config['resources']['subset_BCF']['time']
+    shell:
+        """
+        bcftools view -Ob --threads {threads} {input} {wildcards.CHROM} > {output}
+        bcftools index {output}
+        """
+
+rule convert_parquet:
+    input:
+        f"{config['output_dir']}/dbSNP_156.{{CHROM}}.bcf"
+    output:
+        f"{config['output_dir']}/dbSNP_156.{{CHROM}}.lookup.parquet"
+    resources:
+        mem=config['resources']['convert_parquet']['mem'],
+        partition=config['cluster']['partition'],
+        time=config['resources']['convert_parquet']['time']
+    shell:
+        """
+        pyvariantdb-snp2parquet {input} {output}
+        """
+
+rule combine_all_parquets:
+    input:
+        expand(f"{config['output_dir']}/dbSNP_156.{{CHROM}}.lookup.parquet",CHROM=CHROMS)
+    output:
+        f"{config['output_dir']}/dbSNP_156.combined.lookup.parquet"
+    resources:
+        mem=config['resources'].get('combine_all_parquets', {}).get('mem', '16G'),
+        partition=config['cluster']['partition'],
+        time=config['resources'].get('combine_all_parquets', {}).get('time', '02:00:00')
+    run:
+        import pyarrow.parquet as pq
+        import pyarrow as pa
+
+        # Read all parquet files
+        tables = []
+        for input_file in input:
+            table = pq.read_table(input_file)
+            tables.append(table)
+
+        # Concatenate all tables
+        combined_table = pa.concat_tables(tables)
+
+        # Write the combined table
+        pq.write_table(combined_table, output[0])

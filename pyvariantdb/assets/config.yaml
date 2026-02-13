@@ -15,3 +15,6 @@ resources:
   convert_parquet:
     mem: "8G"
     time: "05:30:00"
+  combine_all_parquets:
+    mem: "16G"
+    time: "02:00:00"

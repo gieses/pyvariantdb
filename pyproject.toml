@@ -1,14 +1,53 @@
 [project]
-name = "dbsnp-to-parquet"
-version = "0.1.0"
-description = "Add your description here"
+name = "pyvariantdb"
+version = "1.0"
+description = "A python package to download, process and access dbSNP data."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = [
-    "cyvcf2>=0.31.1",
-    "snakemake>=9.6.0",
-    "snakemake-executor-plugin-cluster-generic>=1.0.9",
-    "pandas>=2.3.0",
-    "pyarrow>=20.0.0",
-    "polars>=1.31.0",
-]
+
+[project.scripts]
+pyvariantdb-download = "pyvariantdb.download:download_dbsnp"
+pyvariantdb-snp2parquet = "pyvariantdb.scripts.convert:main"
+pyvariantdb-make-dbsnp = "pyvariantdb.scripts.dbsnp2parquet:main"
+
+# ---- build
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pyvariantdb"]
+
+# -- pixi settings
+[tool.pixi.workspace]
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64", "osx-arm64"]
+
+
+[tool.pixi.dependencies]
+python = "*"
+bcftools = "*"
+pandas = "*"
+polars = "*"
+cyvcf2 = "*"
+snakemake-executor-plugin-cluster-generic = "*"
+snakemake = "*"
+pyarrow = "*"
+ipython = "*"
+loguru = "*"
+
+[tool.pixi.pypi-dependencies]
+pyvariantdb = { path = ".", editable = true}
+
+[project.optional-dependencies]
+test = ["pytest", "twine", "pre-commit", "pytest-ruff", "ruff"]
+prod = ["pyvariantdb"]
+all = ["pyvariantdb[test]"]
+
+[tool.pixi.environments]
+default = { features = ["all"], solve-group = "default" }
+prod = { features = ["prod"], solve-group = "default" }
+test = { features = ["test"], solve-group = "default" }
+
+[tool.pixi.feature.test.tasks]
+download = "pytest"
