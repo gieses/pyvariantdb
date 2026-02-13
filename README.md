@@ -46,11 +46,30 @@ The original pipeline remains the same:
 
 ## Usage
 
-1. Configure resources in `config.yaml`
-2. Run the pipeline:
-   ```bash
-   snakemake --cluster "sbatch -p {resources.partition} --mem={resources.mem} -t {resources.time} -c {threads}" -j 23
-   ```
+We aim to provide an easy interface to extract genomic coordinates from dbSNP. For this, the main functionality
+is extremely simple. Just provide the rs-identifier (with or without chromosome) and we fetch the respective
+coordindates. However, to achieve this we need to run the pipeline mentioned above.
+
+Extracting coordinates is simple:
+
+```python
+    from pyvariantdb.lookup import SNPLookup
+    lookup = SNPLookup()
+    # P53 mutations, chromosome 17
+    rsids = ["rs1042522", "rs17878362", "rs1800372"]
+    df_all = lookup.query_all(rsids)
+    df_chr = lookup.query_chromosome(rsids, "17")
+    print(df_all)
+    print(df_chr) 
+```
+
+To build the respective databases we need to run the data processing pipeline.
+
+```bash
+# optionally, we can pass a config for the underlying snakemake workflow with --config
+pyvariantdb-make-dbsnp --jobs 2 --cores 8
+```
+
 
 ## Output
 
